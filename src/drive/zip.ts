@@ -69,9 +69,9 @@ export function readZip(data: Uint8Array): ZipEntry[] {
 }
 
 /** File types the emulator can use, in the order a zip's contents are preferred. */
-const PREFERRED_EXTENSIONS = ['.adf', '.adz', '.amigastate'];
+const PREFERRED_EXTENSIONS = ['.iso', '.img', '.ima', '.vfd', '.flp', '.vhd', '.vmdk', '.vdi', '.qcow2', '.qcow', '.hdd', '.raw'];
 
-/** The usable files in a zip, best first (disk images, then save states; then by name, so "Disk 1" comes first). */
+/** The usable files in a zip, best first (CD images, then disk images; then by name, so "Disk 1" comes first). */
 export async function usableFilesInZip(data: Uint8Array): Promise<File[]> {
   const rank = (name: string) => PREFERRED_EXTENSIONS.findIndex((ext) => name.toLowerCase().endsWith(ext));
   const usable = readZip(data)

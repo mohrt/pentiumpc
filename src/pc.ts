@@ -8,6 +8,7 @@ import { Rtc, type BootDevice } from './chips/rtc';
 import { Cpu, type CpuHost } from './cpu/cpu';
 import { IdeChannel, IdeDrive, type CdImage } from './ide/ide';
 import type { HardDiskImage } from './ide/image';
+import { Ne2000 } from './net/ne2000';
 import { VRAM_BYTES, Vga } from './video/vga';
 
 /** Emulated time per instruction: a 100 MHz Pentium running about one instruction a clock. */
@@ -17,11 +18,17 @@ const MAX_SLICE = 20_000;
 const VGA_WINDOW_START = 0xa0000;
 const VGA_WINDOW_END = 0xc0000;
 const VGA_ROM_SIZE = 0x10000;
+/** The network card's I/O ports and interrupt: the NE2000's usual 300h, and IRQ 9 (as QEMU's ISA NE2000). */
+const NIC_BASE = 0x300;
+const NIC_PORTS = 0x20;
+const NIC_IRQ = 9;
 
 export interface MachineConfig {
   /** RAM in megabytes. */
   memoryMb: number;
   bootOrder: BootDevice[];
+  /** Whether the network card is fitted. */
+  network?: boolean;
 }
 
 /** The Windows 98 preset's machine (machines.ts has all the presets). */
@@ -35,8 +42,9 @@ type Writer = (port: number, value: number) => void;
  * i440FX chipset with a PIIX3 south bridge (two 8259 PICs, an 8254 PIT,
  * two 8237 DMA controllers, the RTC and CMOS), an 8042 keyboard
  * controller with a PS/2 keyboard and mouse, a floppy controller, two IDE
- * channels (a hard disk and a CD-ROM drive), and a Bochs VBE graphics card
- * on PCI. SeaBIOS is the firmware.
+ * channels (a hard disk and a CD-ROM drive), a Bochs VBE graphics card
+ * on PCI, and optionally an NE2000 network card on the ISA bus. SeaBIOS
+ * is the firmware.
  */
 export class Pc implements CpuHost, Clock {
   /** RAM followed by the video memory, so the CPU can reach the frame buffer directly. */
@@ -53,6 +61,7 @@ export class Pc implements CpuHost, Clock {
   vga: Vga;
   readonly pci = new PciBus();
   readonly vgaPci: PciFunction;
+  readonly nic = new Ne2000(new Uint8Array([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]));
   private bios: Uint8Array = new Uint8Array(0);
   private vgaBios: Uint8Array = new Uint8Array(0);
   config: MachineConfig = DEFAULT_CONFIG;
@@ -127,7 +136,12 @@ export class Pc implements CpuHost, Clock {
     this.pci.add(1, 1, ideFn);
     this.pci.add(2, 0, this.vgaPci);
 
+    this.nic.onIrq = (level) => {
+      if (this.config.network) this.pics.setIrq(NIC_IRQ, level);
+    };
+
     this.mapPorts();
+    this.mapNicPorts();
   }
 
   // --- Clock ---------------------------------------------------------------------------
@@ -182,6 +196,7 @@ export class Pc implements CpuHost, Clock {
       this.vga = new Vga(this, this.ram, bytes);
       this.cpu.attachRam();
     }
+    this.mapNicPorts();
   }
 
   /** Switches on: memory cleared, the CMOS set up, everything reset. */
@@ -208,6 +223,7 @@ export class Pc implements CpuHost, Clock {
     this.ide[1].reset();
     this.vga.reset();
     for (const fn of this.pci.all) fn.config[4] = 0;
+    this.nic.reset();
     // The keyboard controller's output port comes out of reset as CFh, with A20 enabled.
     this.a20Keyboard = true;
     this.a20Fast = false;
@@ -249,6 +265,24 @@ export class Pc implements CpuHost, Clock {
       if (read) this.readers8[port] = read;
       if (write) this.writers8[port] = write;
     }
+  }
+
+  /** Maps the network card's ports while it's fitted (and unmaps them when it isn't). */
+  private mapNicPorts(): void {
+    const ports = this.range(NIC_BASE, NIC_BASE + NIC_PORTS - 1);
+    const data = NIC_BASE + 0x10;
+    if (!this.config.network) {
+      for (const port of ports) this.readers8[port] = this.writers8[port] = undefined;
+      this.readers16[data] = this.writers16[data] = this.readers32[data] = this.writers32[data] = undefined;
+      this.pics.setIrq(NIC_IRQ, false);
+      return;
+    }
+    const nic = this.nic;
+    this.on(ports, (p) => nic.read(p - NIC_BASE), (p, v) => nic.write(p - NIC_BASE, v));
+    this.readers16[data] = () => nic.readData(2);
+    this.writers16[data] = (_, v) => nic.writeData(v, 2);
+    this.readers32[data] = () => nic.readData(4);
+    this.writers32[data] = (_, v) => nic.writeData(v, 4);
   }
 
   private range(from: number, to: number): number[] {

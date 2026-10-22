@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-YX2PYPGYW5"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-YX2PYPGYW5');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#111111" />
+    <title>Pentium PC</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <div class="screen-frame">
+        <canvas id="screen" width="720" height="400" tabindex="0" aria-label="PC screen"></canvas>
+        <p class="paused-label">Paused</p>
+        <p class="mouse-label">Click the screen to use the mouse; Esc lets it go</p>
+        <section id="machine-setup" class="machine-setup" aria-labelledby="machine-setup-title" hidden>
+          <h1 id="machine-setup-title">Machine setup</h1>
+          <div class="first-visit">
+            <p class="setup-lead">
+              This is a Pentium PC from the late 1990s, emulated in your browser: a PC with nothing on it yet, like a new one.
+              You bring the operating system and install it, from your own Windows 95 or 98 CD, or DOS and Windows 3.1
+              floppies. Choose the machine to set up below, give it an empty hard disk, then start it and put the CD or
+              floppy in. Everything stays in this browser and is never sent anywhere.
+            </p>
+          </div>
+          <div class="setup-section">
+            <h2>Machine</h2>
+            <p class="setup-row">
+              <label>
+                Set up for
+                <select name="machine" aria-label="Machine"></select>
+              </label>
+              <label>
+                Memory
+                <select name="memory" aria-label="Memory"></select>
+              </label>
+            </p>
+            <p class="machine-description"></p>
+          </div>
+          <div class="setup-section">
+            <h2>Hard disk (C:)</h2>
+            <p class="setup-row"><span class="disk-info"></span></p>
+            <p class="setup-row disk-actions">
+              <select name="disk-size" aria-label="Size of a new hard disk"></select>
+              <button type="button" data-action="new-disk">New empty disk</button>
+              <button type="button" data-action="import-disk" title="A raw .img, or a .vhd, .vmdk, .vdi or .qcow2 from another emulator">Import image...</button>
+              <button type="button" data-action="export-disk" title="Download the disk as a raw .img file">Export .img</button>
+              <button type="button" data-action="delete-disk">Delete</button>
+            </p>
+            <p class="disk-status" role="status"></p>
+            <p class="setup-note">
+              Each machine keeps its own hard disk in this browser, saved as programs write to it. Export it now and then
+              to keep a copy: clearing the site's data deletes it.
+            </p>
+            <input type="file" name="disk-file" accept=".img,.ima,.vhd,.vmdk,.vdi,.qcow2,.qcow,.hdd,.raw" hidden />
+          </div>
+          <div class="setup-section">
+            <h2>Network</h2>
+            <p class="setup-row">
+              <label>
+                Relay
+                <input type="url" name="relay-url" placeholder="ws://localhost:8086/" spellcheck="false" aria-label="Network relay address" />
+              </label>
+            </p>
+            <p class="relay-status" role="status"></p>
+            <p class="setup-note">
+              A web page can't connect to the internet directly, so the PC's network card reaches it through a
+              <strong>relay</strong>: a server that passes the PC's network traffic on to the internet and back. No relay
+              comes with this page. <strong>You need to set one up yourself, or enter the address of an existing one you
+              trust.</strong> Leave it empty for no network.
+            </p>
+            <p class="setup-note">
+              The easiest way is the ready-made relay for Docker in this project's
+              <a href="https://github.com/mohrt/pentiumpc/tree/main/relay" target="_blank" rel="noopener"><code>relay</code></a>
+              folder: run <code>docker compose up -d</code> there and enter <code>ws://localhost:8086/</code>. It also runs
+              WebOne, a proxy that lets Windows 98's Internet Explorer open today's secure (https) web sites. The
+              <a href="https://github.com/mohrt/pentiumpc/blob/main/NETWORKING.md" target="_blank" rel="noopener">networking guide</a>
+              explains it step by step, including setting up Windows.
+            </p>
+            <p class="setup-note">
+              With a relay set, the PC has a network card: an NE2000 compatible at I/O port 300h, interrupt 9. In Windows,
+              Control Panel's Add New Hardware finds it and installs its driver, which asks for the Windows CD. Any relay for the v86 emulator works
+              (WebSocket, one Ethernet frame per message). The relay sees everything the PC sends, so only use one you run or
+              trust.
+            </p>
+          </div>
+          <div class="setup-actions">
+            <button type="button" class="primary" data-action="start-machine">Start the PC</button>
+            <button type="button" data-action="cancel-setup">Back to the PC</button>
+          </div>
+        </section>
+      </div>
+
+      <section id="toolbar" class="toolbar" aria-label="PC">
+        <span class="toolbar-group">
+          <button type="button" data-action="pause">Pause</button>
+          <button type="button" data-action="ctrl-alt-del" title="Sends Ctrl+Alt+Del, which your own computer keeps for itself">Ctrl+Alt+Del</button>
+          <button type="button" data-action="reset" title="The reset button: restart, keeping the disks in">Reset</button>
+          <button type="button" data-action="power" title="Switch the PC off and on again">Power cycle</button>
+          <button type="button" data-action="fullscreen" title="Esc leaves full screen">Full screen</button>
+          <button type="button" data-action="machine-setup" title="The machine, its memory and its hard disk">Machine setup...</button>
+        </span>
+        <span class="toolbar-message" role="status"></span>
+      </section>
+
+      <section id="drives" class="drives" aria-label="Drives">
+        <div class="drive" data-drive="floppy" data-state="empty">
+          <span class="drive-led" title="Drive activity"></span>
+          <strong class="drive-label">A:</strong>
+          <span class="media-name">Empty</span>
+          <span class="media-detail"></span>
+          <span class="drive-actions">
+            <button type="button" data-action="choose">Insert floppy...</button>
+            <button type="button" data-action="eject">Eject</button>
+            <button type="button" data-action="download" title="The floppy as it is now, with what was saved to it">Download .img</button>
+          </span>
+        </div>
+        <div class="drive" data-drive="cdrom" data-state="empty">
+          <span class="drive-led" title="Drive activity"></span>
+          <strong class="drive-label">CD-ROM:</strong>
+          <span class="media-name">Empty</span>
+          <span class="media-detail"></span>
+          <span class="drive-actions">
+            <button type="button" data-action="choose">Insert CD...</button>
+            <button type="button" data-action="eject">Eject</button>
+          </span>
+        </div>
+        <div class="drive" data-drive="hd" data-state="empty">
+          <span class="drive-led" title="Hard disk activity"></span>
+          <strong class="drive-label">C:</strong>
+          <span class="media-name">No hard disk</span>
+          <span class="media-detail"></span>
+          <span class="drive-actions drive-hint">Machine setup... has its options</span>
+        </div>
+        <p class="drives-hint">
+          Drop files anywhere on the page: a CD image (.iso) goes in the CD-ROM drive, a floppy image (.img, .ima, up to
+          2.88 MB) in drive A:, and a larger .img, or a .vhd, .vmdk, .vdi or .qcow2, can become the hard disk. Zips work too.
+        </p>
+        <p class="drop-hint">Release to insert</p>
+        <p class="drives-message" role="status"></p>
+        <input type="file" name="media-file" accept=".iso,.img,.ima,.vfd,.flp,.vhd,.vmdk,.vdi,.qcow2,.qcow,.hdd,.raw,.zip" multiple hidden />
+      </section>
+
+      <p class="input-hint">
+        Click the screen to type and use the mouse (Esc lets the mouse go). Ctrl+Alt+Del is on the toolbar, since your own
+        computer keeps it.
+      </p>
+      <p id="status">Starting...</p>
+      <nav class="emulator-links" aria-label="Emulators">
+        Emulators:
+        <a href="https://mohrt.github.io/appleii/">Apple II</a>
+        <a href="https://mohrt.github.io/appleiigs/">Apple IIgs</a>
+        <a href="https://mohrt.github.io/sz81/">Timex Sinclair 1000</a>
+        <a href="https://mohrt.github.io/c64/">Commodore 64</a>
+        <a href="https://mohrt.github.io/amiga/">Amiga</a>
+        <a href="https://mohrt.github.io/ibmps2/">IBM PS/2</a>
+        <strong aria-current="page">Pentium PC</strong>
+        <a href="https://mohrt.github.io/atari2600/">Atari 2600</a>
+        <a href="https://mohrt.github.io/intellivision/">Intellivision</a>
+        <a href="https://mohrt.github.io/colecovision/">ColecoVision</a>
+        <a href="https://mohrt.github.io/nes/">NES</a>
+        <a href="https://mohrt.github.io/mastersystem/">Sega Master System</a>
+        <a href="https://mohrt.github.io/genesis/">Sega Genesis</a>
+        <a href="https://mohrt.github.io/gameboy/">Game Boy</a>
+        <a href="https://mohrt.github.io/playstation/">PlayStation</a>
+      </nav>
+      <footer class="site-links">
+        <a href="https://mohrt.com/">mohrt.com</a>
+        <a href="https://github.com/mohrt/pentiumpc" target="_blank" rel="noopener">Source on GitHub</a>
+        <a href="https://github.com/mohrt/pentiumpc/blob/main/NETWORKING.md" target="_blank" rel="noopener">Networking guide</a>
+        <a href="https://x.com/mohrt" target="_blank" rel="noopener">@mohrt on X</a>
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

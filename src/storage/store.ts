@@ -3,7 +3,7 @@ export interface KeyValueStore<T> {
   get(key: string): Promise<T | undefined>;
   put(key: string, value: T): Promise<void>;
   delete(key: string): Promise<void>;
-  entries(): Promise<[string, T][]>;
+  keys(): Promise<string[]>;
 }
 
 export class MemoryStore<T> implements KeyValueStore<T> {
@@ -21,21 +21,14 @@ export class MemoryStore<T> implements KeyValueStore<T> {
     this.data.delete(key);
   }
 
-  async entries(): Promise<[string, T][]> {
-    return [...this.data.entries()];
+  async keys(): Promise<string[]> {
+    return [...this.data.keys()];
   }
 }
 
-/** Save states and the changes games have written to their disks. */
-const SAVES_DATABASE = { name: 'amiga-emulator', stores: ['diskSaves', 'saveDisks', 'saveStates'] } as const;
-/** The user's ROMs, in their own database so the ROMs and the saves can change apart. */
-const ROMS_DATABASE = { name: 'amiga-system-roms', stores: ['systemRoms'] } as const;
-/** The hard disk, in its own database: it can run to hundreds of megabytes. */
-const HARD_DISK_DATABASE = { name: 'amiga-hard-disk', stores: ['hardDisk'] } as const;
-export type StoreName =
-  | (typeof SAVES_DATABASE.stores)[number]
-  | (typeof ROMS_DATABASE.stores)[number]
-  | (typeof HARD_DISK_DATABASE.stores)[number];
+/** The hard disks, in their own database: they run to gigabytes. */
+const HARD_DISK_DATABASE = { name: 'pentiumpc-hard-disks', stores: ['hardDisks'] } as const;
+export type StoreName = (typeof HARD_DISK_DATABASE.stores)[number];
 
 /** How long opening storage may take before the page says it's waiting. */
 const SLOW_OPEN_MS = 3000;
@@ -69,10 +62,8 @@ class IndexedDbStore<T> implements KeyValueStore<T> {
     await request(this.store('readwrite').delete(key));
   }
 
-  async entries(): Promise<[string, T][]> {
-    const store = this.store('readonly');
-    const [keys, values] = await Promise.all([request(store.getAllKeys()), request(store.getAll())]);
-    return keys.map((key, i) => [String(key), values[i] as T]);
+  async keys(): Promise<string[]> {
+    return (await request(this.store('readonly').getAllKeys())).map(String);
   }
 }
 
@@ -112,12 +103,8 @@ export async function openBrowserStores(onSlow?: () => void): Promise<Record<Sto
   void navigator.storage?.persist?.();
   const slowTimer = setTimeout(() => onSlow?.(), SLOW_OPEN_MS);
   try {
-    const stores = {} as Record<StoreName, KeyValueStore<unknown>>;
-    for (const { name, stores: storeNames } of [SAVES_DATABASE, ROMS_DATABASE, HARD_DISK_DATABASE]) {
-      const db = await openDatabase(name, storeNames);
-      for (const store of storeNames) stores[store] = new IndexedDbStore(db, store);
-    }
-    return stores;
+    const db = await openDatabase(HARD_DISK_DATABASE.name, HARD_DISK_DATABASE.stores);
+    return { hardDisks: new IndexedDbStore(db, 'hardDisks') };
   } finally {
     clearTimeout(slowTimer);
   }
@@ -125,11 +112,5 @@ export async function openBrowserStores(onSlow?: () => void): Promise<Record<Sto
 
 /** In-memory stores, used when the browser has no IndexedDB (and in tests). */
 export function memoryStores(): Record<StoreName, KeyValueStore<unknown>> {
-  return {
-    diskSaves: new MemoryStore(),
-    saveDisks: new MemoryStore(),
-    saveStates: new MemoryStore(),
-    systemRoms: new MemoryStore(),
-    hardDisk: new MemoryStore(),
-  };
+  return { hardDisks: new MemoryStore() };
 }

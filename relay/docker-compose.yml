@@ -1,0 +1,40 @@
+# The Pentium PC's network, on your own computer: a relay that gives the
+# emulated PC its network and internet access, and WebOne, a proxy that lets
+# the PC's old browsers open today's (https) web sites. See NETWORKING.md.
+#
+#   docker compose up -d       then use ws://localhost:8086/ as the relay
+#   docker compose down        to stop it
+name: pentiumpc-network
+
+services:
+  relay:
+    # websockproxy (https://github.com/benjamincburns/websockproxy): Ethernet over
+    # WebSocket, with DHCP, DNS and NAT for the PCs on it (10.5.0.0/16).
+    image: benjamincburns/jor1k-relay:latest
+    # It creates a network device and firewall rules inside its container.
+    privileged: true
+    ports:
+      # Only this computer can connect.
+      - "127.0.0.1:8086:80"
+    environment:
+      # No speed limit: it's only you.
+      WEBSOCKPROXY_RATE_LIMIT: "0"
+      # The PCs may reach the internet and WebOne, but not your local network or this computer.
+      WEBSOCKPROXY_ALLOWED_PRIVATE_NETS: "172.31.98.10/32"
+    networks:
+      pentiumpc:
+        ipv4_address: 172.31.98.2
+    restart: unless-stopped
+
+  webone:
+    build: ./webone
+    networks:
+      pentiumpc:
+        ipv4_address: 172.31.98.10
+    restart: unless-stopped
+
+networks:
+  pentiumpc:
+    ipam:
+      config:
+        - subnet: 172.31.98.0/24

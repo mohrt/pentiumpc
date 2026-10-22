@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FloppyImage } from '../src/chips/fdc';
@@ -8,6 +8,7 @@ import { HardDiskImage } from '../src/ide/image';
 import { MACHINES } from '../src/machines';
 import type { Pc } from '../src/pc';
 import { bootedPc, runUntil } from './helpers/machine';
+import { screenPng } from './helpers/png';
 
 // Operating systems booted from disks/: the free ones come from `npm run fetch:test-disks`;
 // Windows images are your own (win95boot.img with win95.iso, and win98se.iso).
@@ -67,5 +68,39 @@ describe('booting operating systems', () => {
     press(pc, 'Enter');
     expect(runUntil(pc, 60, () => pc.vga.screenText().includes('To continue with Setup, press ENTER'))).toBe(true);
     expect(pc.vga.screenText()).toContain('Microsoft Windows 98 Setup');
+  });
+
+  // win98se-installed.img: a copy of a hard disk Windows 98 SE was installed on in this PC.
+  it.skipIf(!have('win98se-installed.img'))('Windows 98: an installed disk starts the desktop', { timeout: 1_200_000 }, () => {
+    const pc = bootedPc({
+      debug: false,
+      config: MACHINES.win98.config,
+      setup: (p) => {
+        p.attachHardDisk(HardDiskImage.fromFile(load('win98se-installed.img')));
+        // Interpreted: with translated blocks, Windows 98 hangs as it starts (a translation bug not yet found).
+        p.cpu.jitEnabled = false;
+      },
+    });
+    const rgb = (x: number, y: number) => {
+      const pixel = pc.vga.framebuffer[y * pc.vga.width + x];
+      return [pixel & 0xff, (pixel >> 8) & 0xff, (pixel >> 16) & 0xff];
+    };
+    // The desktop's teal background, with the light grey taskbar along the bottom (looked for every half second);
+    // the shades depend on the palette Windows' display driver sets.
+    const teal = ([r, g, b]: number[]) => g > r + 0x30 && Math.abs(g - b) < 0x10;
+    const grey = ([r, g, b]: number[]) => r > 0xa0 && Math.max(r, g, b) - Math.min(r, g, b) < 0x10;
+    let checks = 0;
+    const desktop = () => {
+      if (++checks % 50) return false;
+      pc.vga.render();
+      return pc.vga.width === 640 && pc.vga.height === 480 && teal(rgb(600, 240)) && grey(rgb(320, 470));
+    };
+    const started = runUntil(pc, 180, desktop);
+    if (!started) {
+      const dir = join(__dirname, '..', '.profile');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'win98-desktop-test.png'), screenPng(pc.vga));
+    }
+    expect(started).toBe(true);
   });
 });

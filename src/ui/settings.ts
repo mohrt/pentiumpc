@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'amiga-settings';
+const STORAGE_KEY = 'pentiumpc-settings';
 
 type SettingValue = string | boolean;
 type SettingField = HTMLInputElement | HTMLSelectElement;

@@ -259,12 +259,21 @@ export class Cpu {
   private codePages: Uint8Array;
   /** Set when a block's page is written, so a running block (which reads it) can stop. */
   jitDirty = false;
+  /**
+   * Checks every translated block against the interpreter, calling this with what differs
+   * (slow; for finding translation bugs). Set it with `checkJit`.
+   */
+  private jitCheck: ((report: string) => void) | null = null;
+  /** RAM written while a block is checked: each index, then the byte it held. */
+  private journal: number[] | null = null;
+  /** Port and device memory accesses, counted while checking blocks: a block that made any can't run twice. */
+  private deviceAccesses = 0;
   // The descriptor last read by readDescriptor.
   private descLo = 0;
   private descHi = 0;
   private descAddr = 0;
 
-  constructor(private readonly host: CpuHost) {
+  constructor(private host: CpuHost) {
     this.ram = host.ram;
     this.ram32 = new Int32Array(host.ram.buffer, host.ram.byteOffset, host.ram.byteLength >> 2);
     this.codePages = new Uint8Array((host.ram.length >>> 12) + 1);
@@ -532,6 +541,7 @@ export class Cpu {
   private physWrite32(addr: number, v: number): void {
     addr = (addr & this.a20Mask) >>> 0;
     if (addr + 3 < this.ram.length && !(addr & 3)) {
+      if (this.journal !== null) this.journalWrite(addr, 4);
       this.ram32[addr >> 2] = v;
       if (this.codePages[addr >>> 12] !== 0) this.codeWrite(addr, 4);
     }
@@ -660,6 +670,7 @@ export class Cpu {
     const need = user ? T_RAM | T_UWRITE : T_RAM | T_SWRITE;
     if ((e & need) === need) {
       const p = (e & PAGE_MASK) | (lin & 0xfff);
+      if (this.journal !== null) this.journalWrite(p, 1);
       this.ram[p] = v;
       if (this.codePages[p >>> 12] !== 0) this.codeWrite(p);
       return;
@@ -667,6 +678,7 @@ export class Cpu {
     const entry = this.writeEntry(lin, user);
     const p = ((entry & PAGE_MASK) | (lin & 0xfff)) >>> 0;
     if (entry & T_RAM) {
+      if (this.journal !== null) this.journalWrite(p, 1);
       this.ram[p] = v;
       if (this.codePages[p >>> 12] !== 0) this.codeWrite(p);
     } else {
@@ -679,6 +691,7 @@ export class Cpu {
     const need = user ? T_RAM | T_UWRITE : T_RAM | T_SWRITE;
     if ((e & need) === need && (lin & 0xfff) !== 0xfff) {
       const p = (e & PAGE_MASK) | (lin & 0xfff);
+      if (this.journal !== null) this.journalWrite(p, 2);
       this.ram[p] = v;
       this.ram[p + 1] = v >> 8;
       if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 2);
@@ -694,6 +707,7 @@ export class Cpu {
     const entry = this.writeEntry(lin, user);
     const p = ((entry & PAGE_MASK) | (lin & 0xfff)) >>> 0;
     if (entry & T_RAM) {
+      if (this.journal !== null) this.journalWrite(p, 2);
       this.ram[p] = v;
       this.ram[p + 1] = v >> 8;
       if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 2);
@@ -710,6 +724,7 @@ export class Cpu {
     if ((e & need) === need && off <= 0xffc) {
       const p = (e & PAGE_MASK) | off;
       if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 4);
+      if (this.journal !== null) this.journalWrite(p, 4);
       if (!(p & 3)) {
         this.ram32[p >> 2] = v;
         return;
@@ -731,6 +746,7 @@ export class Cpu {
     const p = ((entry & PAGE_MASK) | off) >>> 0;
     if (entry & T_RAM) {
       if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 4);
+      if (this.journal !== null) this.journalWrite(p, 4);
       const ram = this.ram;
       ram[p] = v;
       ram[p + 1] = v >> 8;
@@ -1188,10 +1204,14 @@ export class Cpu {
       if (!trap && this.jitEnabled) {
         const block = this.findBlock();
         if (block !== null) {
-          this.budget -= block.count;
-          this.cycles += block.count;
-          this.jitDirty = false;
-          block.fn(this, this.regs);
+          if (this.jitCheck !== null) {
+            this.runChecked(block);
+          } else {
+            this.budget -= block.count;
+            this.cycles += block.count;
+            this.jitDirty = false;
+            block.fn(this, this.regs);
+          }
           if (this.halted) return;
           continue;
         }
@@ -1288,6 +1308,165 @@ export class Cpu {
     this.codePages[page] = 0;
     this.rewrites.set(page, (this.rewrites.get(page) ?? 0) + 1);
     this.jitDirty = true;
+  }
+
+  // --- Checking translated blocks --------------------------------------------------------
+
+  /**
+   * Runs every translated block twice, translated and then interpreted from the same
+   * start, and reports what differs; the interpreter's result is kept. Blocks that touch
+   * devices (ports, device memory) or fault aren't checked. `null` stops checking.
+   */
+  checkJit(report: ((text: string) => void) | null): void {
+    if (report && !this.jitCheck) {
+      const host = this.host;
+      const count = <T extends unknown[], R>(fn: (...args: T) => R) => (...args: T): R => {
+        this.deviceAccesses++;
+        return fn.apply(host, args);
+      };
+      this.host = Object.assign(Object.create(host) as CpuHost, {
+        readMemory8: count(host.readMemory8),
+        writeMemory8: count(host.writeMemory8),
+        in8: count(host.in8),
+        in16: count(host.in16),
+        in32: count(host.in32),
+        out8: count(host.out8),
+        out16: count(host.out16),
+        out32: count(host.out32),
+      });
+    } else if (!report && this.jitCheck) {
+      this.host = Object.getPrototypeOf(this.host) as CpuHost;
+    }
+    this.jitCheck = report;
+  }
+
+  private journalWrite(index: number, size: number): void {
+    for (let i = 0; i < size; i++) this.journal!.push(index + i, this.ram[index + i]);
+  }
+
+  private static readonly STATE_NAMES = [
+    ...['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi', 'eip', 'eflags'],
+    ...['es', 'cs', 'ss', 'ds', 'fs', 'gs'].flatMap((s) => [s, `${s}.base`, `${s}.limit`, `${s}.attr`]),
+    ...['cpl', 'code32', 'stack32', 'cr0', 'cr2', 'cr3', 'cr4', 'halted', 'inhibit'],
+  ];
+
+  /** The state a block can change (besides memory), in the order of STATE_NAMES. */
+  private checkState(): number[] {
+    const state = [...this.regs, this.eip, this.getEflags()];
+    for (let s = 0; s < 6; s++) state.push(this.sel[s], this.segBase[s], this.segLimit[s], this.segAttr[s]);
+    state.push(this.cpl, +this.code32, +this.stack32, this.cr0, this.cr2, this.cr3, this.cr4, +this.halted, +this.inhibit);
+    return state;
+  }
+
+  private saveForCheck() {
+    return {
+      state: this.checkState(),
+      bounds: [this.rLow, this.rHigh, this.wLow, this.wHigh].map((a) => [...a]),
+      csBase: this.csBase,
+      user: this.user,
+    };
+  }
+
+  private restoreForCheck(saved: ReturnType<Cpu['saveForCheck']>): void {
+    const s = saved.state;
+    this.regs.set(s.slice(0, 8));
+    this.eip = s[8];
+    this.setEflags(s[9]);
+    for (let seg = 0; seg < 6; seg++) {
+      [this.sel[seg], this.segBase[seg], this.segLimit[seg], this.segAttr[seg]] = s.slice(10 + seg * 4, 14 + seg * 4);
+    }
+    [this.rLow, this.rHigh, this.wLow, this.wHigh].forEach((a, i) => a.splice(0, 6, ...saved.bounds[i]));
+    let at = 34;
+    this.cpl = s[at++];
+    this.code32 = s[at++] === 1;
+    this.stack32 = s[at++] === 1;
+    [this.cr0, this.cr2, this.cr3, this.cr4] = s.slice(at, at + 4);
+    at += 4;
+    this.halted = s[at++] === 1;
+    this.inhibit = s[at++] === 1;
+    this.csBase = saved.csBase;
+    this.user = saved.user;
+    // The page walks happen again, setting the accessed and dirty bits the undone writes cleared.
+    this.flushTlb();
+  }
+
+  private runChecked(block: Block): void {
+    const start = this.saveForCheck();
+    const lin = (this.csBase + this.eip) >>> 0;
+    const phys = this.fetchPhys | (lin & 0xfff);
+    const devices = this.deviceAccesses;
+    this.journal = [];
+    this.budget -= block.count;
+    this.cycles += block.count;
+    this.jitDirty = false;
+    // A fault ends the block where the exception handling (in `run`) restarts the faulting instruction.
+    let translatedFault = -1;
+    try {
+      block.fn(this, this.regs);
+    } catch (error) {
+      if (error !== FAULT) throw error;
+      translatedFault = this.faultVector;
+      this.eip = this.startEip;
+      this.regs[ESP] = this.startEsp;
+    }
+    const translatedWrites = this.journal;
+    this.journal = null;
+    if (this.deviceAccesses !== devices) {
+      if (translatedFault >= 0) throw FAULT;
+      return;
+    }
+    const translated = this.checkState();
+    const translatedMemory = new Map<number, number>();
+    for (let i = 0; i < translatedWrites.length; i += 2) translatedMemory.set(translatedWrites[i], this.ram[translatedWrites[i]]);
+    for (let i = translatedWrites.length - 2; i >= 0; i -= 2) this.ram[translatedWrites[i]] = translatedWrites[i + 1];
+
+    this.restoreForCheck(start);
+    const original = new Map<number, number>();
+    for (let i = 0; i < translatedWrites.length; i += 2) if (!original.has(translatedWrites[i])) original.set(translatedWrites[i], translatedWrites[i + 1]);
+    this.journal = [];
+    let steps = 0;
+    const bytes = Array.from(this.ram.subarray(phys, phys + block.length), (b) => b.toString(16).padStart(2, '0')).join(' ');
+    const where = `block at ${lin.toString(16)} (physical ${phys.toString(16)}, ${this.code32 ? 32 : 16}-bit, ${block.count} instructions): ${bytes}`;
+    // A block may stop early, and may pass the address it stopped at more than once (a loop inside
+    // it), so the interpreter runs until its state matches, for at most the block's instructions.
+    const matches = () => this.checkState().every((value, i) => value === translated[i]);
+    let interpretedFault = -1;
+    try {
+      while (steps < block.count && !this.halted && !(steps > 0 && translatedFault < 0 && matches())) {
+        this.step();
+        steps++;
+      }
+    } catch (error) {
+      if (error !== FAULT) throw error;
+      interpretedFault = this.faultVector;
+      this.eip = this.startEip;
+      this.regs[ESP] = this.startEsp;
+    }
+    const interpretedWrites = this.journal;
+    this.journal = null;
+    for (let i = 0; i < interpretedWrites.length; i += 2) if (!original.has(interpretedWrites[i])) original.set(interpretedWrites[i], interpretedWrites[i + 1]);
+
+    const interpreted = this.checkState();
+    const differences: string[] = [];
+    if (interpretedFault !== translatedFault) {
+      const describe = (vector: number) => (vector < 0 ? 'no fault' : `fault ${vector}`);
+      differences.push(`translated ${describe(translatedFault)}, interpreted ${describe(interpretedFault)} after ${steps} instructions`);
+    }
+    const hex = (n: number) => (n >>> 0).toString(16);
+    interpreted.forEach((value, i) => {
+      if (value !== translated[i]) differences.push(`${Cpu.STATE_NAMES[i]} translated ${hex(translated[i])} interpreted ${hex(value)}`);
+    });
+    for (const [index, before] of original) {
+      const t = translatedMemory.get(index) ?? before;
+      const v = this.ram[index];
+      if (t !== v) differences.push(`ram[${hex(index)}] translated ${hex(t)} interpreted ${hex(v)} (was ${hex(before)})`);
+    }
+    if (differences.length) {
+      const startRegs = Cpu.STATE_NAMES.slice(0, 10).map((name, i) => `${name}=${hex(start.state[i])}`).join(' ');
+      this.jitCheck?.(`${where}\n  from ${startRegs}\n  ${differences.join('\n  ')}`);
+    }
+    // The interpreter's fault (with its vector and code) is the one delivered.
+    if (interpretedFault >= 0) throw FAULT;
   }
 
   /** A device wrote a byte of memory at `index` in `ram` (DMA). */
