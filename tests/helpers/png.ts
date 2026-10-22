@@ -1,6 +1,5 @@
 import { deflateSync } from 'node:zlib';
-import type { Amiga } from '../../src/amiga';
-import { FRAME_WIDTH } from '../../src/denise/denise';
+import type { Vga } from '../../src/video/vga';
 import { crc32 } from '../../src/util/crc32';
 
 function chunk(type: string, data: Uint8Array): Uint8Array {
@@ -13,11 +12,10 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out;
 }
 
-/** Encodes the machine's picture as an RGB PNG, 720 wide and two rows per line. */
-export function framePng(amiga: Amiga): Uint8Array {
-  const { framebuffer, outputLines } = amiga.denise;
-  const width = FRAME_WIDTH;
-  const height = outputLines * 2;
+/** Renders the VGA's picture and encodes it as an RGB PNG. */
+export function screenPng(vga: Vga): Uint8Array {
+  vga.render();
+  const { framebuffer, width, height } = vga;
   const raw = new Uint8Array(height * (1 + width * 3));
   for (let y = 0; y < height; y++) {
     const row = y * (1 + width * 3);
@@ -33,12 +31,7 @@ export function framePng(amiga: Amiga): Uint8Array {
   view.setUint32(0, width);
   view.setUint32(4, height);
   header.set([8, 2, 0, 0, 0], 8);
-  const parts = [
-    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    chunk('IDAT', deflateSync(raw)),
-    chunk('IEND', new Uint8Array(0)),
-  ];
+  const parts = [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(raw)), chunk('IEND', new Uint8Array(0))];
   const png = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
   let offset = 0;
   for (const part of parts) {

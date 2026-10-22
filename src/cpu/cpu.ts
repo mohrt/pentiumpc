@@ -118,6 +118,9 @@ const PARITY = Uint8Array.from({ length: 256 }, (_, n) => {
   return bits & 1 ? 0 : 1;
 });
 
+/** Prefix bytes: segment overrides, operand and address size, LOCK and REP. */
+const PREFIXES = Uint8Array.from({ length: 256 }, (_, op) => ([0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3].includes(op) ? 1 : 0));
+
 /** Exceptions that push an error code. */
 const HAS_ERROR_CODE = new Set([DOUBLE_FAULT, TS, NP, SS_FAULT, GP, PAGE_FAULT, 17]);
 const CONTRIBUTORY = new Set([DE, TS, NP, SS_FAULT, GP]);
@@ -223,6 +226,9 @@ export class Cpu {
   private tlbCount = 0;
   private fetchPage = -1;
   private fetchPhys = 0;
+  /** The next instruction byte's place in `ram`, valid while below `fpEnd` (the end of its page). */
+  private fp = 0;
+  private fpEnd = 0;
   // The descriptor last read by readDescriptor.
   private descLo = 0;
   private descHi = 0;
@@ -848,12 +854,34 @@ export class Cpu {
 
   // --- Instruction fetch ---------------------------------------------------------------
 
+  /** Points `fp` at the instruction's first byte in RAM when its page is cached, for fetch8's fast path. */
+  private startFetch(): void {
+    const lin = (this.csBase + this.eip) | 0;
+    if ((lin & PAGE_MASK) === this.fetchPage) {
+      this.fp = this.fetchPhys | (lin & 0xfff);
+      this.fpEnd = this.fetchPhys + 0x1000;
+    } else {
+      this.fp = this.fpEnd = 0;
+    }
+  }
+
   private fetch8(): number {
+    const p = this.fp;
+    if (p < this.fpEnd) {
+      this.fp = p + 1;
+      this.eip = (this.eip + 1) | 0;
+      return this.ram[p];
+    }
+    return this.fetchByte();
+  }
+
+  private fetchByte(): number {
     const lin = (this.csBase + this.eip) | 0;
     let b: number;
     if ((lin & PAGE_MASK) === this.fetchPage) b = this.ram[this.fetchPhys | (lin & 0xfff)];
     else b = this.fetchSlow(lin);
     this.eip = (this.eip + 1) | 0;
+    this.startFetch();
     return b;
   }
 
@@ -882,10 +910,10 @@ export class Cpu {
   }
 
   private fetch32(): number {
-    const lin = (this.csBase + this.eip) | 0;
-    if ((lin & PAGE_MASK) === this.fetchPage && (lin & 0xfff) <= 0xffc) {
-      const p = this.fetchPhys | (lin & 0xfff);
+    const p = this.fp;
+    if (p + 4 <= this.fpEnd) {
       const ram = this.ram;
+      this.fp = p + 4;
       this.eip = (this.eip + 4) | 0;
       return ram[p] | (ram[p + 1] << 8) | (ram[p + 2] << 16) | (ram[p + 3] << 24);
     }
@@ -1707,7 +1735,13 @@ export class Cpu {
     this.segOv = -1;
     this.rep = 0;
     this.lock = false;
+    this.startFetch();
     let op = this.fetch8();
+    if (!PREFIXES[op]) {
+      if (op < 0x80) this.exec00(op);
+      else this.exec80(op);
+      return;
+    }
     for (let prefixes = 1; ; prefixes++) {
       switch (op) {
         case 0x26:

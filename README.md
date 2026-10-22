@@ -26,10 +26,16 @@ Windows is never included or served. Load your own installation CD (an `.iso`), 
 
 ```sh
 npm install
-npm test                    # tests needing downloaded files skip when they're missing
+npm test                    # tests needing downloaded files or your Windows images skip when they're missing
 npm run fetch:386           # optional: the 80386 SingleStepTests (about 580 MB)
-npm run fetch:test-disks    # optional: a FreeDOS hard disk image for the boot tests
+npm run fetch:test-disks    # optional: FreeDOS 1.2, ReactOS 0.4.15, Tiny Core Linux 15 and KolibriOS
 npm run fetch:bios          # downloads SeaBIOS again (the copies in public/bios are committed)
 ```
 
-`DEBUG_BOOT=1 npx vitest run tests/debug.test.ts --disableConsoleIntercept` traces a boot. The tests use SeaBIOS's debug build, which writes its log to port 402h.
+`tests/boot.test.ts` boots KolibriOS to its desktop and, when you put your own images in `disks/` (never committed), takes Windows 95 (`win95boot.img` with `win95.iso`) and Windows 98 (`win98se.iso`) to their setup screens. The tests use SeaBIOS's debug build, which writes its log to port 402h; `DEBUG_BOOT=1 npx vitest run tests/debug.test.ts --disableConsoleIntercept` traces a boot.
+
+Three scripts help outside the tests; bundle them with `npx rolldown scripts/<name>.ts -o .profile/<name>.mjs --platform node`, then run them with node:
+
+- `boot.ts`: boots images (`node .profile/boot.mjs disks/win95boot.img disks/win95.iso @5=Enter 60`), printing the screen and saving a screenshot.
+- `session.ts`: a long-running PC for working through an installer, steered by commands written to `.profile/<name>/commands.txt`; the hard disk is kept in `disks/<name>-hd.img`.
+- `bench.ts` and `cpu-bench.ts`: the emulator's speed on FreeDOS's boot and on small loops.
