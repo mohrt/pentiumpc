@@ -40,5 +40,5 @@ npm run fetch:bios          # downloads SeaBIOS again (the copies in public/bios
 Some scripts help outside the tests; bundle them with `npx rolldown scripts/<name>.ts -o .profile/<name>.mjs --platform node`, then run them with node:
 
 - `boot.ts`: boots images (`node .profile/boot.mjs disks/win95boot.img disks/win95.iso @5=Enter 60`), printing the screen and saving a screenshot.
-- `session.ts`: a long-running PC for working through an installer, steered by commands written to `.profile/<name>/commands.txt`; the hard disk is kept in `disks/<name>-hd.img`.
+- `session.ts`: a long-running PC for working through an installer, steered by commands written to `.profile/<name>/commands.txt`; the hard disk is kept in `disks/<name>-hd.img`. `node scripts/watch.mjs <name>` shows it at http://127.0.0.1:8098/ and sends it the keys typed there.
 - `bench.ts` and `cpu-bench.ts`: the emulator's speed on FreeDOS's boot and on small loops.
