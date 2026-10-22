@@ -48,6 +48,12 @@ function bootFloppy(): FloppyImage {
 }
 
 describe('machine presets', () => {
+  it('DOS and Windows 3.1: a 16 MB PC that boots from the floppy drive', () => {
+    const pc = bootedPc({ config: MACHINES.dos.config, setup: (p) => p.insertFloppy(0, bootFloppy()) });
+    expect(runUntil(pc, 10, () => pc.vga.screenText().includes(MESSAGE))).toBe(true);
+    expect(pc.ramBytes).toBe(16 << 20);
+  });
+
   it('Windows 95: tries the floppy drive first, and boots a setup-style boot disk from it', () => {
     const pc = bootedPc({ config: MACHINES.win95.config, setup: (p) => p.insertFloppy(0, bootFloppy()) });
     const booted = runUntil(pc, 10, () => pc.vga.screenText().includes(MESSAGE));

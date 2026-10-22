@@ -1,8 +1,8 @@
 import type { MachineConfig } from './pc';
 
-export type MachineId = 'win95' | 'win98';
+export type MachineId = 'dos' | 'win95' | 'win98';
 
-/** A starting point for the machine setup: the same PC, set up the way each Windows wants it. */
+/** A starting point for the machine setup: the same PC, set up the way each system wants it. */
 export interface MachinePreset {
   id: MachineId;
   name: string;
@@ -14,6 +14,14 @@ export interface MachinePreset {
 }
 
 export const MACHINES: Record<MachineId, MachinePreset> = {
+  dos: {
+    id: 'dos',
+    name: 'DOS and Windows 3.1',
+    description:
+      'A 16 MB PC that boots from the floppy drive first, for installing DOS from its disks (MS-DOS, PC DOS or FreeDOS) and Windows 3.1 on top. A 500 MB disk is plenty, and within what DOS partitions allow.',
+    config: { memoryMb: 16, bootOrder: ['floppy', 'hd', 'cdrom'] },
+    newDiskMb: 500,
+  },
   win95: {
     id: 'win95',
     name: 'Windows 95',

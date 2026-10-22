@@ -12,7 +12,7 @@ describe('SeaBIOS', () => {
     expect(log).toContain('CPU Mhz=100');
     expect(log).toContain('VBE DISPI: lfb_addr=fd000000, size 16 MB');
     expect(log).toContain('PS2 keyboard initialized');
-    expect(log).toContain('DVD/CD [ata1-0: WIN98 BROWSER CD-ROM ATAPI-4 DVD/CD]');
+    expect(log).toContain('DVD/CD [ata1-0: PENTIUMPC CD-ROM ATAPI-4 DVD/CD]');
     expect(log).toContain('Device reports MEDIUM NOT PRESENT');
     expect(pc.vga.screenText()).toContain('SeaBIOS (version rel-1.16.2');
   });

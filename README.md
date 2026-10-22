@@ -1,32 +1,35 @@
-# Windows 95 and 98 PC in the browser
+# Pentium PC in the browser
 
-A late-1990s Pentium PC emulated from scratch in TypeScript, for running Windows 95 and Windows 98 (and DOS, and Windows 3.1 on DOS). The emulator is still being built: the machine boots, but the page around it isn't there yet.
+A late-1990s Pentium PC emulated from scratch in TypeScript. It emulates the hardware, not any one operating system: install Windows 95 or Windows 98 from your own CD, or run DOS, Windows 3.1, FreeDOS and the other PC systems of the time. The emulator is still being built: the machine boots and installs Windows, but the web page around it isn't there yet.
 
-- **CPU:** an x86 with the 386's real, protected and virtual 8086 modes and paging, the 486's additions and the Pentium's CPUID, RDTSC, MSRs and CMPXCHG8B, with an x87 FPU. It passes all 941 files of Daniel Balsom's real-mode SingleStepTests for the 80386, captured from a 386EX; the few tests that show quirks of that chip are listed in `tests/cpu386.test.ts` with the reason for each.
+- **CPU:** an x86 with the 386's real, protected and virtual 8086 modes and paging, the 486's additions and the Pentium's CPUID, RDTSC, MSRs and CMPXCHG8B, with an x87 FPU. Code that runs often is translated into JavaScript functions, which runs it about twice as fast as interpreting it. It passes all 941 files of Daniel Balsom's real-mode SingleStepTests for the 80386, captured from a 386EX, both interpreted and translated; the few tests that show quirks of that chip are listed in `tests/cpu386.test.ts` with the reason for each.
 - **Chipset:** an i440FX with a PIIX3: two 8259 PICs, an 8254 timer, two 8237 DMA controllers, the RTC and CMOS, PCI configuration and the A20 gate.
 - **Devices:** an 8042 with a PS/2 keyboard and wheel mouse, a floppy controller (360K to 2.88 MB disks), an IDE hard disk and an ATAPI CD-ROM drive, and a VGA with the Bochs VBE extension (up to 1600 x 1200 in true colour, with a linear frame buffer).
 - **Firmware:** SeaBIOS 1.16.2 and SeaVGABIOS, as the v86 project builds them, in `public/bios/` (LGPL 3, sources at [seabios.org](https://www.seabios.org/)).
 
-## Windows 95 and Windows 98
+## What runs on it
 
-Both run on the same PC. Machine setup will offer a preset for each (`src/machines.ts`):
+Machine setup will offer a preset for each kind of system (`src/machines.ts`); they are the same PC, set up the way each system wants it:
 
 | | Memory | Boots from | New hard disk |
 |---|---|---|---|
+| DOS and Windows 3.1 | 16 MB | floppy, hard disk, CD-ROM | 500 MB |
 | Windows 95 | 32 MB | floppy, hard disk, CD-ROM | 500 MB |
 | Windows 98 | 64 MB | hard disk, CD-ROM, floppy | 2 GB |
 
-Windows is never included or served. Load your own installation CD (an `.iso`), boot floppy (`.img`) or a hard disk image with Windows already installed; they stay in your browser.
+No operating system is included or served except the firmware. Load your own installation disks: a CD (`.iso`), floppies (`.img`, `.ima`), or a hard disk image with a system already installed. They stay in your browser.
 
-- **Installing Windows 95:** its CD isn't bootable, so start from a Windows 95 boot floppy with CD-ROM support (the startup disk Windows 95 makes, or one of the widely shared boot disks), then run `SETUP` from the CD. The original release partitions with FAT16, so keep the disk under 2 GB; OSR2 (95B and C) can use FAT32.
-- **Installing Windows 98:** create a blank hard disk and insert the CD. The blank disk can't boot, so the PC falls through to the CD, whose menu starts setup. Once Windows is installed it starts from the hard disk.
-- **Graphics:** neither version has a driver for this graphics card, so both start in 640 x 480 with 16 colours. A VESA driver such as VBEMP 9x gives high colour and larger screens.
+- **DOS and Windows 3.1:** boot the first DOS installation floppy, let its setup partition and format the hard disk, and swap in the other disks as it asks. Then run Windows 3.1's `SETUP` from its first floppy.
+- **Windows 95:** its CD isn't bootable, so start from a Windows 95 boot floppy with CD-ROM support (the startup disk Windows 95 makes, or a shared boot disk), then run `SETUP` from the CD. The original release partitions with FAT16, so keep the disk under 2 GB; OSR2 (95B and C) can use FAT32.
+- **Windows 98:** create a blank hard disk and insert the CD. The blank disk can't boot, so the PC falls through to the CD, whose menu starts setup; choose *Boot from CD-ROM*. Once Windows is installed it starts from the hard disk.
+- **Other systems:** FreeDOS, KolibriOS and Linux distributions of the time boot from their own floppies, CDs or disk images.
+- **Graphics:** Windows has no driver for this graphics card, so Windows 3.1, 95 and 98 start in 640 x 480 with 16 colours. A VESA driver such as VBEMP 9x gives Windows 95 and 98 high colour and larger screens.
 
 ## Development
 
 ```sh
 npm install
-npm test                    # tests needing downloaded files or your Windows images skip when they're missing
+npm test                    # tests needing downloaded files or your own images skip when they're missing
 npm run fetch:386           # optional: the 80386 SingleStepTests (about 580 MB)
 npm run fetch:test-disks    # optional: FreeDOS 1.2, ReactOS 0.4.15, Tiny Core Linux 15 and KolibriOS
 npm run fetch:bios          # downloads SeaBIOS again (the copies in public/bios are committed)
@@ -34,7 +37,7 @@ npm run fetch:bios          # downloads SeaBIOS again (the copies in public/bios
 
 `tests/boot.test.ts` boots KolibriOS to its desktop and, when you put your own images in `disks/` (never committed), takes Windows 95 (`win95boot.img` with `win95.iso`) and Windows 98 (`win98se.iso`) to their setup screens. The tests use SeaBIOS's debug build, which writes its log to port 402h; `DEBUG_BOOT=1 npx vitest run tests/debug.test.ts --disableConsoleIntercept` traces a boot.
 
-Three scripts help outside the tests; bundle them with `npx rolldown scripts/<name>.ts -o .profile/<name>.mjs --platform node`, then run them with node:
+Some scripts help outside the tests; bundle them with `npx rolldown scripts/<name>.ts -o .profile/<name>.mjs --platform node`, then run them with node:
 
 - `boot.ts`: boots images (`node .profile/boot.mjs disks/win95boot.img disks/win95.iso @5=Enter 60`), printing the screen and saving a screenshot.
 - `session.ts`: a long-running PC for working through an installer, steered by commands written to `.profile/<name>/commands.txt`; the hard disk is kept in `disks/<name>-hd.img`.

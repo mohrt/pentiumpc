@@ -274,12 +274,12 @@ export class IdeDrive {
     w[4] = SECTOR_BYTES * geometry.sectors;
     w[5] = SECTOR_BYTES;
     w[6] = geometry.sectors;
-    putString(w, 10, 10, 'WIN98EMU00000001');
+    putString(w, 10, 10, 'PENTIUMPC0000001');
     w[20] = 3;
     w[21] = 512;
     w[22] = 4;
     putString(w, 23, 4, '1.0');
-    putString(w, 27, 20, 'WIN98 BROWSER HARDDISK');
+    putString(w, 27, 20, 'PENTIUMPC HARD DISK');
     w[47] = 0x8000 | MAX_MULTIPLE;
     w[48] = 1;
     w[49] = 0x0200;
@@ -305,9 +305,9 @@ export class IdeDrive {
   private identifyCdrom(): Uint16Array {
     const w = new Uint16Array(256);
     w[0] = 0x85c0;
-    putString(w, 10, 10, 'WIN98EMUCD000001');
+    putString(w, 10, 10, 'PENTIUMPCCD00001');
     putString(w, 23, 4, '1.0');
-    putString(w, 27, 20, 'WIN98 BROWSER CD-ROM');
+    putString(w, 27, 20, 'PENTIUMPC CD-ROM');
     w[49] = 0x0200;
     w[53] = 0x0003;
     w[64] = 0x0003;
@@ -564,7 +564,7 @@ export class IdeDrive {
       data[2] = 0x00;
       data[3] = 0x21;
       data[4] = 31;
-      const text = 'WIN98EM BROWSER CD-ROM  1.0 ';
+      const text = 'BROWSER PENTIUMPC CD-ROM1.0 ';
       for (let i = 0; i < 28; i++) data[8 + i] = text.charCodeAt(i);
       this.packetReply(data, p[4]);
       return;
