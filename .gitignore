@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.DS_Store
+
+# Windows is never committed: your own installation CD or hard disk images go in disks/ (for the tests only).
+/disks/
+/roms/
+*.iso
+*.img
+*.ima
+*.vhd
+
+# Free games and test files are downloaded by scripts.
+public/games/
+tests/fixtures/80386/
+tests/fixtures/test386/
