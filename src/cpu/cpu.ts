@@ -969,6 +969,15 @@ export class Cpu {
       this.csBase = selector << 4;
       this.fetchPage = -1;
     }
+    this.makeRealModeAccessible(seg);
+  }
+
+  /** Real mode checks only limits: whatever type the cache held (from protected mode), the segment can be read and written. */
+  private makeRealModeAccessible(seg: number): void {
+    const attr = this.segAttr[seg];
+    if ((attr & 0x9e) === 0x92) return;
+    this.segAttr[seg] = 0x93 | (attr & (SEG_BIG | 0x8000));
+    this.updateWindows(seg);
   }
 
   /** Reads the descriptor `selector` picks into descLo/descHi; false if it's beyond its table. */
@@ -1117,7 +1126,11 @@ export class Cpu {
     this.run(1);
   }
 
+  /** Called with each exception as it is delivered (for debugging). */
+  onException: ((vector: number, code: number) => void) | null = null;
+
   private deliverException(vector: number, code: number): void {
+    this.onException?.(vector, code);
     const first = this.delivering;
     if (first === DOUBLE_FAULT) {
       this.delivering = -1;
@@ -2574,6 +2587,7 @@ export class Cpu {
         const changed = this.cr0 ^ v;
         this.cr0 = v | CR0_ET;
         if (changed & (CR0_PG | CR0_WP | CR0_PE)) this.flushTlb();
+        if (changed & CR0_PE && !(v & CR0_PE)) for (let seg = 0; seg < 6; seg++) this.makeRealModeAccessible(seg);
         return;
       }
       case 2:

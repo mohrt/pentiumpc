@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "fetch:386": "node scripts/fetch-386-tests.mjs",
     "fetch:bios": "node scripts/fetch-bios.mjs",
+    "fetch:test-disks": "node scripts/fetch-test-disks.mjs",
     "fetch:games": "node scripts/fetch-games.mjs"
   },
   "devDependencies": {

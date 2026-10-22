@@ -14,3 +14,4 @@ dist/
 public/games/
 tests/fixtures/80386/
 tests/fixtures/test386/
+/.profile/

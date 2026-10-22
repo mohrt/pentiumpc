@@ -24,13 +24,14 @@ export interface MachineConfig {
   bootOrder: BootDevice[];
 }
 
-export const DEFAULT_CONFIG: MachineConfig = { memoryMb: 64, bootOrder: ['cdrom', 'hd', 'floppy'] };
+/** The Windows 98 machine (see machines.ts for the presets). */
+export const DEFAULT_CONFIG: MachineConfig = { memoryMb: 64, bootOrder: ['hd', 'cdrom', 'floppy'] };
 
 type Reader = (port: number) => number;
 type Writer = (port: number, value: number) => void;
 
 /**
- * A Pentium PC of the late 1990s, the kind Windows 98 was made for: an
+ * A Pentium PC of the late 1990s, the kind Windows 95 and 98 were made for: an
  * i440FX chipset with a PIIX3 south bridge (two 8259 PICs, an 8254 PIT,
  * two 8237 DMA controllers, the RTC and CMOS), an 8042 keyboard
  * controller with a PS/2 keyboard and mouse, a floppy controller, two IDE
