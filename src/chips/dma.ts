@@ -37,6 +37,8 @@ export class Dma {
   private status = [0, 0];
   /** The last POST code written to port 80h. */
   postCode = 0;
+  /** Called with each RAM address a transfer writes (the CPU drops code it translated there). */
+  onMemoryWrite: (address: number) => void = () => {};
 
   constructor(private readonly memory: DmaMemory) {}
 
@@ -186,7 +188,10 @@ export class Dma {
     let moved = 0;
     while (moved < length && !c.masked) {
       const p = this.physical(channel, c);
-      if (p < ram.length) ram[p] = from[offset + moved];
+      if (p < ram.length) {
+        ram[p] = from[offset + moved];
+        this.onMemoryWrite(p);
+      }
       if (wide && p + 1 < ram.length) ram[p + 1] = from[offset + moved + 1];
       moved += wide ? 2 : 1;
       if (this.step(channel, c)) {

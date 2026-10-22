@@ -68,6 +68,8 @@ export class Pc implements CpuHost, Clock {
   private a20Fast = false;
   private portB = 0;
   private resetPending = false;
+  /** Cycles skipped while the CPU was halted (so cycles minus these were instructions run). */
+  idleCycles = 0;
   /** Called when the guest resets the machine (after the reset is done). */
   onReset: () => void = () => {};
 
@@ -84,6 +86,7 @@ export class Pc implements CpuHost, Clock {
         return ram();
       },
     });
+    this.dma.onMemoryWrite = (address) => this.cpu.memoryWritten(address);
     this.kbc = new I8042(this);
     this.fdc = new Fdc(this, this.dma);
     this.ide = [new IdeChannel(this), new IdeChannel(this)];
@@ -428,7 +431,10 @@ export class Pc implements CpuHost, Clock {
       if (cpu.halted) {
         // Nothing to do until an interrupt: time moves on to the next event.
         const target = Math.ceil(next / CYCLE_NS);
-        if (cpu.cycles < target) cpu.cycles = target;
+        if (cpu.cycles < target) {
+          this.idleCycles += target - cpu.cycles;
+          cpu.cycles = target;
+        }
       }
       if (this.resetPending) {
         this.reset();

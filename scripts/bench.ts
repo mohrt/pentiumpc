@@ -1,13 +1,17 @@
 // Measures how fast the emulator runs FreeDOS's boot (disks/freedos12.img, from npm run fetch:test-disks).
 // Bundle and run with: npx rolldown scripts/bench.ts -o /tmp/bench.mjs --platform node && node /tmp/bench.mjs
 import { readFileSync } from 'node:fs';
+import { jitOptions } from '../src/cpu/jit';
 import { HardDiskImage } from '../src/ide/image';
 import { DEFAULT_CONFIG, Pc } from '../src/pc';
 
 const seconds = Number(process.argv[2] ?? 4);
+jitOptions.interpretInBlocks = process.argv[3] !== 'short-blocks';
+if (process.argv[3] === 'interpreter') jitOptions.interpretInBlocks = false;
 const pc = new Pc({ ...DEFAULT_CONFIG, bootOrder: ['hd'] });
 pc.setFirmware(new Uint8Array(readFileSync('public/bios/seabios.bin')), new Uint8Array(readFileSync('public/bios/vgabios.bin')));
 pc.attachHardDisk(HardDiskImage.fromFile(new Uint8Array(readFileSync('disks/freedos12.img'))));
+pc.cpu.jitEnabled = process.argv[3] !== 'interpreter';
 pc.powerOn(Date.UTC(1999, 4, 5) / 1000);
 const start = performance.now();
 const startCycles = pc.cpu.cycles;

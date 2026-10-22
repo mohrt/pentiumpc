@@ -163,7 +163,11 @@ function runTest(cpu: Cpu, host: TestHost, test: MooTest, flagMask: number): str
   return problems.length ? problems.join(', ') : null;
 }
 
-describe.skipIf(!available)('80386 SingleStepTests (real mode)', () => {
+// Each file runs interpreted, then translated (every instruction the translator handles goes through it).
+describe.skipIf(!available).each([
+  ['interpreted', false],
+  ['translated', true],
+])('80386 SingleStepTests (real mode, %s)', (_mode, jit) => {
   if (!available) return;
   const table = parseOpcodeTable(readFileSync(join(FIXTURES, '80386.csv'), 'utf8'));
   const revoked = new Set(readFileSync(join(FIXTURES, 'revocation_list.txt'), 'utf8').split(/\s+/).filter(Boolean));
@@ -172,6 +176,8 @@ describe.skipIf(!available)('80386 SingleStepTests (real mode)', () => {
     .filter((name) => !only || only.includes(name.replace('.MOO.gz', '')));
   const host = new TestHost();
   const cpu = new Cpu(host);
+  cpu.jitEnabled = jit;
+  cpu.jitThreshold = 1;
 
   it.each(files)('%s', (file) => {
     const info = table.get(opcodeKey(file)) ?? { modrm: true, flagMask: 0xffff };

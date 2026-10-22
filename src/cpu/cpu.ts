@@ -57,6 +57,7 @@ import {
   ZF,
 } from './constants';
 import { Fpu } from './fpu';
+import { compileBlock, type Block } from './jit';
 
 /** What the CPU is plugged into: memory, I/O ports and the interrupt controller. */
 export interface CpuHost {
@@ -94,6 +95,13 @@ const PAGE_MASK = ~0xfff;
 const SEG_BIG = 0x4000;
 /** Pages remembered for flushing one by one; beyond this the whole TLB is cleared. */
 const TLB_TRACK = 4096;
+/** Translated blocks kept at most; beyond this they are all dropped and translated again as needed. */
+const BLOCK_SLOTS = 1 << 18;
+const SLOT_SHIFT = 32 - 18;
+/** The hash table is cleared (and blocks translated again as needed) when this full. */
+const MAX_BLOCKS = BLOCK_SLOTS * 0.7;
+/** A page whose code has been overwritten this often runs interpreted (it's code mixed with busy data, or generated code). */
+const MAX_REWRITES = 8;
 
 // How the lazily computed flags were last set.
 const L_ADD = 0;
@@ -229,6 +237,28 @@ export class Cpu {
   /** The next instruction byte's place in `ram`, valid while below `fpEnd` (the end of its page). */
   private fp = 0;
   private fpEnd = 0;
+  /** Translating code into JavaScript (off, everything is interpreted). */
+  jitEnabled = true;
+  /** How many times a block's first instruction runs before the block is translated. */
+  jitThreshold = 16;
+  /** Translated blocks by physical address and code size (null: its first instruction isn't translatable). */
+  // A hash table of blocks: the key (physical address and code size) in each slot, the block
+  // (undefined until translated, null when untranslatable) and how often the address has run.
+  private readonly slotKey = new Float64Array(BLOCK_SLOTS).fill(-1);
+  private readonly slotBlock: (Block | null | undefined)[] = new Array<Block | null | undefined>(BLOCK_SLOTS).fill(undefined);
+  private readonly slotHits = new Int32Array(BLOCK_SLOTS);
+  private slotsUsed = 0;
+  private readonly usedSlots = new Int32Array(BLOCK_SLOTS);
+  /** The slots of each page's blocks. */
+  private readonly pageSlots = new Map<number, number[]>();
+  /** One bit for each byte of `ram` that translated code came from. */
+  private codeBits: Uint32Array;
+  /** How often each page's code has been overwritten; pages rewritten often aren't translated any more. */
+  private readonly rewrites = new Map<number, number>();
+  /** Pages of `ram` with translated code (a nonzero entry sends writes to `codeWrite`). */
+  private codePages: Uint8Array;
+  /** Set when a block's page is written, so a running block (which reads it) can stop. */
+  jitDirty = false;
   // The descriptor last read by readDescriptor.
   private descLo = 0;
   private descHi = 0;
@@ -237,6 +267,8 @@ export class Cpu {
   constructor(private readonly host: CpuHost) {
     this.ram = host.ram;
     this.ram32 = new Int32Array(host.ram.buffer, host.ram.byteOffset, host.ram.byteLength >> 2);
+    this.codePages = new Uint8Array((host.ram.length >>> 12) + 1);
+    this.codeBits = new Uint32Array((host.ram.length >>> 5) + 1);
     this.fpu = new Fpu(this);
     this.reset();
   }
@@ -245,6 +277,9 @@ export class Cpu {
   attachRam(): void {
     this.ram = this.host.ram;
     this.ram32 = new Int32Array(this.ram.buffer, this.ram.byteOffset, this.ram.byteLength >> 2);
+    this.flushBlocks();
+    this.codePages = new Uint8Array((this.ram.length >>> 12) + 1);
+    this.codeBits = new Uint32Array((this.ram.length >>> 5) + 1);
     this.flushTlb();
   }
 
@@ -272,6 +307,7 @@ export class Cpu {
     this.inhibit = false;
     this.delivering = -1;
     this.flushTlb();
+    this.flushBlocks();
     this.fpu.reset();
   }
 
@@ -495,7 +531,10 @@ export class Cpu {
 
   private physWrite32(addr: number, v: number): void {
     addr = (addr & this.a20Mask) >>> 0;
-    if (addr + 3 < this.ram.length && !(addr & 3)) this.ram32[addr >> 2] = v;
+    if (addr + 3 < this.ram.length && !(addr & 3)) {
+      this.ram32[addr >> 2] = v;
+      if (this.codePages[addr >>> 12] !== 0) this.codeWrite(addr, 4);
+    }
   }
 
   /** Looks up a linear address (walking the page tables when paging), fills its TLB entry and returns it. */
@@ -620,13 +659,19 @@ export class Cpu {
     const e = this.tlb[lin >>> 12];
     const need = user ? T_RAM | T_UWRITE : T_RAM | T_SWRITE;
     if ((e & need) === need) {
-      this.ram[(e & PAGE_MASK) | (lin & 0xfff)] = v;
+      const p = (e & PAGE_MASK) | (lin & 0xfff);
+      this.ram[p] = v;
+      if (this.codePages[p >>> 12] !== 0) this.codeWrite(p);
       return;
     }
     const entry = this.writeEntry(lin, user);
     const p = ((entry & PAGE_MASK) | (lin & 0xfff)) >>> 0;
-    if (entry & T_RAM) this.ram[p] = v;
-    else this.host.writeMemory8(p, v & 0xff);
+    if (entry & T_RAM) {
+      this.ram[p] = v;
+      if (this.codePages[p >>> 12] !== 0) this.codeWrite(p);
+    } else {
+      this.host.writeMemory8(p, v & 0xff);
+    }
   }
 
   private ww(lin: number, v: number, user: boolean): void {
@@ -636,6 +681,7 @@ export class Cpu {
       const p = (e & PAGE_MASK) | (lin & 0xfff);
       this.ram[p] = v;
       this.ram[p + 1] = v >> 8;
+      if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 2);
       return;
     }
     if ((lin & 0xfff) === 0xfff) {
@@ -650,6 +696,7 @@ export class Cpu {
     if (entry & T_RAM) {
       this.ram[p] = v;
       this.ram[p + 1] = v >> 8;
+      if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 2);
     } else {
       this.host.writeMemory8(p, v & 0xff);
       this.host.writeMemory8(p + 1, (v >> 8) & 0xff);
@@ -662,6 +709,7 @@ export class Cpu {
     const off = lin & 0xfff;
     if ((e & need) === need && off <= 0xffc) {
       const p = (e & PAGE_MASK) | off;
+      if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 4);
       if (!(p & 3)) {
         this.ram32[p >> 2] = v;
         return;
@@ -682,6 +730,7 @@ export class Cpu {
     const entry = this.writeEntry(lin, user);
     const p = ((entry & PAGE_MASK) | off) >>> 0;
     if (entry & T_RAM) {
+      if (this.codePages[p >>> 12] !== 0) this.codeWrite(p, 4);
       const ram = this.ram;
       ram[p] = v;
       ram[p + 1] = v >> 8;
@@ -1136,6 +1185,17 @@ export class Cpu {
       }
       this.inhibit = false;
       const trap = this.flags & TF;
+      if (!trap && this.jitEnabled) {
+        const block = this.findBlock();
+        if (block !== null) {
+          this.budget -= block.count;
+          this.cycles += block.count;
+          this.jitDirty = false;
+          block.fn(this, this.regs);
+          if (this.halted) return;
+          continue;
+        }
+      }
       this.step();
       this.budget--;
       this.cycles++;
@@ -1147,6 +1207,109 @@ export class Cpu {
       }
       if (this.halted) return;
     }
+  }
+
+  // --- Translated blocks ---------------------------------------------------------------
+
+  /** The translated block starting at the instruction pointer, translating it once it has run often enough. */
+  private findBlock(): Block | null {
+    const lin = (this.csBase + this.eip) | 0;
+    if ((lin & PAGE_MASK) !== this.fetchPage && !this.cacheFetchPage(lin)) return null;
+    const phys = this.fetchPhys | (lin & 0xfff);
+    const key = this.code32 ? phys * 2 + 1 : phys * 2;
+    const keys = this.slotKey;
+    let slot = Math.imul(key | 0, 0x9e3779b1) >>> SLOT_SHIFT;
+    for (;;) {
+      const k = keys[slot];
+      if (k === key) break;
+      if (k === -1) {
+        if (this.slotsUsed > MAX_BLOCKS) {
+          this.flushBlocks();
+          return null;
+        }
+        keys[slot] = key;
+        this.usedSlots[this.slotsUsed++] = slot;
+        break;
+      }
+      slot = (slot + 1) & (BLOCK_SLOTS - 1);
+    }
+    const block = this.slotBlock[slot];
+    if (block !== undefined) return block;
+    if (++this.slotHits[slot] < this.jitThreshold) return null;
+    const page = phys >>> 12;
+    const compiled = (this.rewrites.get(page) ?? 0) < MAX_REWRITES ? compileBlock(this.ram, phys, this.code32) : null;
+    this.slotBlock[slot] = compiled;
+    const slots = this.pageSlots.get(page);
+    if (slots) slots.push(slot);
+    else this.pageSlots.set(page, [slot]);
+    // A block that wasn't translated still watches its first byte, so the guess is revisited if the code changes.
+    const end = phys + (compiled ? compiled.length : 1);
+    for (let i = phys; i < end; i++) this.codeBits[i >>> 5] |= 1 << (i & 31);
+    this.codePages[page] = 1;
+    return compiled;
+  }
+
+  /**
+   * Makes `lin`'s page the cached fetch page if it's RAM inside the CS limit, without faulting: with
+   * paging on, only when the TLB already has the page (a fault here would come before the instruction starts).
+   */
+  private cacheFetchPage(lin: number): boolean {
+    const need = this.user ? T_RAM | T_UREAD : T_RAM | T_SREAD;
+    let e = this.tlb[lin >>> 12];
+    if ((e & need) !== need) {
+      if (this.cr0 & CR0_PG) return false;
+      e = this.translate(lin, false, this.user);
+      if ((e & need) !== need) return false;
+    }
+    const limit = this.segLimit[CS];
+    const pageOffset = ((lin & PAGE_MASK) - this.csBase) >>> 0;
+    if (pageOffset > limit || pageOffset + 0xfff > limit) return false;
+    this.fetchPage = lin & PAGE_MASK;
+    this.fetchPhys = e & PAGE_MASK;
+    return true;
+  }
+
+  /** A write of `size` bytes at `index` in a page with translated code: if it reaches code, the page's blocks go. */
+  private codeWrite(index: number, size = 1): void {
+    const bits = this.codeBits;
+    let hit = 0;
+    for (let i = index; i < index + size; i++) hit |= bits[i >>> 5] & (1 << (i & 31));
+    if (!hit) return;
+    const page = index >>> 12;
+    const slots = this.pageSlots.get(page);
+    if (slots) {
+      for (const slot of slots) {
+        this.slotBlock[slot] = undefined;
+        this.slotHits[slot] = 0;
+      }
+      this.pageSlots.delete(page);
+    }
+    bits.fill(0, page << 7, (page + 1) << 7);
+    this.codePages[page] = 0;
+    this.rewrites.set(page, (this.rewrites.get(page) ?? 0) + 1);
+    this.jitDirty = true;
+  }
+
+  /** A device wrote a byte of memory at `index` in `ram` (DMA). */
+  memoryWritten(index: number): void {
+    if (this.codePages[index >>> 12]) this.codeWrite(index);
+  }
+
+  /** Drops every block (only the slots and pages in use are cleared, so this is cheap when few are). */
+  private flushBlocks(): void {
+    for (let i = 0; i < this.slotsUsed; i++) {
+      const slot = this.usedSlots[i];
+      this.slotKey[slot] = -1;
+      this.slotBlock[slot] = undefined;
+      this.slotHits[slot] = 0;
+    }
+    this.slotsUsed = 0;
+    for (const page of this.pageSlots.keys()) {
+      this.codeBits.fill(0, page << 7, (page + 1) << 7);
+      this.codePages[page] = 0;
+    }
+    this.pageSlots.clear();
+    this.rewrites.clear();
   }
 
   /** Runs one instruction (for tests); exceptions it raises are delivered. */
