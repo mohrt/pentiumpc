@@ -24,11 +24,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run fetch:games
-      - run: npm run fetch:m68k
+      # Tests that need the 80386 test suite, the free test disks or Windows images skip here.
       - run: npm test
-      # Users load the copyrighted Kickstart into their own browser; the site never serves a system ROM
-      # (the AROS ROMs the tests use stay in tests/fixtures/).
+      # Users load their own operating systems into their browser; the site serves only SeaBIOS.
       - run: npm run build
       - uses: actions/upload-pages-artifact@v5
         with:
