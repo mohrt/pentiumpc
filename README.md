@@ -1,5 +1,7 @@
 # Pentium PC in the browser
 
+**Run it at [mohrt.github.io/pentiumpc](https://mohrt.github.io/pentiumpc/)**
+
 A late-1990s Pentium PC emulated from scratch in TypeScript, running in a web page. It emulates the hardware, not any one operating system: install Windows 95 or Windows 98 from your own CD, or run DOS, Windows 3.1, FreeDOS and the other PC systems of the time. Its hard disk is kept in your browser, and with a relay it can go on the internet.
 
 - **CPU:** an x86 with the 386's real, protected and virtual 8086 modes and paging, the 486's additions and the Pentium's CPUID, RDTSC, MSRs and CMPXCHG8B, with an x87 FPU. Code that runs often is translated into JavaScript functions, which runs it about twice as fast as interpreting it. It passes all 941 files of Daniel Balsom's real-mode SingleStepTests for the 80386, captured from a 386EX, both interpreted and translated; the few tests that show quirks of that chip are listed in `tests/cpu386.test.ts` with the reason for each.
