@@ -1199,9 +1199,12 @@ export class Cpu {
         const vector = this.host.acknowledgeInterrupt();
         if (vector >= 0) this.interrupt(vector, INT_EXTERNAL, -1);
       }
+      // The instruction after STI or a stack segment load runs on its own (interpreted), so a
+      // pending interrupt is taken right after it, before anything further (such as a CLI).
+      const shadow = this.inhibit;
       this.inhibit = false;
       const trap = this.flags & TF;
-      if (!trap && this.jitEnabled) {
+      if (!trap && !shadow && this.jitEnabled) {
         const block = this.findBlock();
         if (block !== null) {
           if (this.jitCheck !== null) {

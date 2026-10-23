@@ -75,11 +75,7 @@ describe('booting operating systems', () => {
     const pc = bootedPc({
       debug: false,
       config: MACHINES.win98.config,
-      setup: (p) => {
-        p.attachHardDisk(HardDiskImage.fromFile(load('win98se-installed.img')));
-        // Interpreted: with translated blocks, Windows 98 hangs as it starts (a translation bug not yet found).
-        p.cpu.jitEnabled = false;
-      },
+      setup: (p) => p.attachHardDisk(HardDiskImage.fromFile(load('win98se-installed.img'))),
     });
     const rgb = (x: number, y: number) => {
       const pixel = pc.vga.framebuffer[y * pc.vga.width + x];

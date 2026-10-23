@@ -75,8 +75,6 @@ async function start(): Promise<void> {
   const hardDisks = new HardDisks(stores.hardDisks);
 
   const pc = new Pc(machineConfig(choices));
-  // Interpreted for now: with translated blocks, Windows 98 hangs as it starts (a translation bug not yet found).
-  pc.cpu.jitEnabled = false;
   pc.setFirmware(firmware.bios, firmware.vgaBios);
   pc.nic.mac.set(networkAddress());
   let relay: RelayConnection | null = null;
